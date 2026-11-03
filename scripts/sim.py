@@ -10,6 +10,7 @@ Look for instructions in `README.md` and in the official documentation.
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,6 +34,7 @@ def simulate(
     controller: str | None = None,
     n_runs: int = 1,
     render: bool | None = None,
+    seed: int | None = None,
 ) -> list[float]:
     """Evaluate the drone controller over multiple episodes.
 
@@ -42,6 +44,8 @@ def simulate(
             the controller specified in the config file is used.
         n_runs: The number of episodes.
         render: Enable/disable rendering the simulation.
+        seed: Reset seed to reproduce a race. Defaults to the configured seed,
+            or a logged random seed.
 
     Returns:
         A list of episode times.
@@ -71,8 +75,15 @@ def simulate(
     env = JaxToNumpy(env)
 
     ep_times = []
-    for _ in range(n_runs):  # Run n_runs episodes with the controller
-        obs, info = env.reset()
+    configured_seed = config.env.seed if seed is None else seed
+    for run in range(n_runs):
+        race_seed = (
+            secrets.randbelow(2**31 - 1)
+            if configured_seed is None or configured_seed == -1
+            else int(configured_seed) + run
+        )
+        logger.info("Race seed: %d", race_seed)
+        obs, info = env.reset(seed=race_seed)
         controller: Controller = controller_cls(obs, info, config)
         i = 0
         fps = 60
@@ -85,6 +96,7 @@ def simulate(
             control_time = time.perf_counter() - t_loop
 
             obs, reward, terminated, truncated, info = env.step(action)
+            curr_time = (i + 1) / config.env.freq
             # Update the controller internal state and models.
             t_callback = time.perf_counter()
             controller_finished = controller.step_callback(
